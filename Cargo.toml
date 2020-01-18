@@ -1,0 +1,20 @@
+[package]
+name = "chronos"
+version = "0.1.0"
+authors = ["Yang Keao <keao.yang@yahoo.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+goblin = "0.1"
+clap = "2.33"
+nix = "0.16"
+findshlibs = "0.5"
+auxv = { git = "https://github.com/YangKeao/auxv-pid.git" }
+sysconf = "0.3"
+
+[workspace]
+members = [
+    "fake_clock_gettime"
+]
