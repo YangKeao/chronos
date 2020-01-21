@@ -13,6 +13,10 @@ nix = "0.16"
 findshlibs = "0.5"
 auxv = { git = "https://github.com/YangKeao/auxv-pid.git" }
 sysconf = "0.3"
+quick-error = "1.2"
+itertools = "0.8"
+memmap = "0.7"
+backtrace = "0.3"
 
 [workspace]
 members = [
