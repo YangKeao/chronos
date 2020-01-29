@@ -7,6 +7,7 @@
 ```
 git clone https://github.com/YangKeao/chronos.git
 cd chronos
+cargo build --all
 cargo run -- --pid $pid --tv_nsec_delta 1000000000 --tv_sec_delta 1000000000 --fake ./target/debug/libfake_clock_gettime.so
 ```
 
