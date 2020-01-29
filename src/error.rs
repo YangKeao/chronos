@@ -1,5 +1,5 @@
-use quick_error::quick_error;
 use backtrace::Backtrace;
+use quick_error::quick_error;
 
 use crate::maps::MapError;
 

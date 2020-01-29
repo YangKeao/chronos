@@ -1,7 +1,7 @@
-use std::fs::File;
-use std::io::{Read, BufReader, BufRead};
 use nix::unistd::Pid;
 use quick_error::quick_error;
+use std::fs::File;
+use std::io::{BufRead, BufReader, Read};
 
 use itertools::Itertools;
 
@@ -24,13 +24,13 @@ pub struct Entry {
 }
 
 pub struct MapReader {
-    file: BufReader<File>
+    file: BufReader<File>,
 }
 
 impl MapReader {
     pub fn from_pid(pid: Pid) -> MapResult<MapReader> {
         Ok(MapReader {
-            file: BufReader::new(File::open(format!("/proc/{}/maps", pid.as_raw()))?)
+            file: BufReader::new(File::open(format!("/proc/{}/maps", pid.as_raw()))?),
         })
     }
 }
@@ -51,12 +51,12 @@ impl Iterator for MapReader {
         let (start_addr, end_addr): (u64, u64) = (
             u64::from_str_radix(start_addr, 16).ok()?,
             u64::from_str_radix(end_addr, 16).ok()?,
-            );
+        );
 
         let privilege = section.next()?.to_owned();
 
         let padding_size: &str = section.next()?;
-        let padding_size =  u64::from_str_radix(padding_size, 16).ok()?;
+        let padding_size = u64::from_str_radix(padding_size, 16).ok()?;
 
         let path: String = section.last()?.trim().to_owned();
 

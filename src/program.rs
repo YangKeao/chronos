@@ -1,16 +1,15 @@
-use nix::unistd::Pid;
-use nix::sys::wait::waitpid;
-use nix::sys::ptrace;
-use nix::libc::user_regs_struct;
-use memmap::MmapOptions;
 use goblin::Object;
+use nix::libc::user_regs_struct;
+use nix::sys::ptrace;
+use nix::sys::wait::waitpid;
+use nix::unistd::Pid;
 
 use crate::error::*;
 use crate::maps::{Entry, MapReader};
-use nix::sys::uio::{process_vm_readv, RemoteIoVec, IoVec, process_vm_writev};
-use std::path::{PathBuf, Path};
-use std::os::raw::{c_void, c_long};
+use nix::sys::uio::{process_vm_readv, process_vm_writev, IoVec, RemoteIoVec};
 use std::io::Read;
+use std::os::raw::{c_long, c_void};
+use std::path::Path;
 
 pub struct Program {
     pid: Pid,
@@ -44,7 +43,6 @@ impl Program {
         let dlsym_address = self.get_func_in_lib("__libc_dlsym", libc_entry)?;
         let guard = self.protect()?;
 
-        let ip = guard.ip();
         let mut regs = guard.regs();
         regs.rax = dlsym_address as u64; // dlsym
         regs.rdi = handle; // handle
@@ -54,9 +52,11 @@ impl Program {
         Ok(guard.call_and_int()? as *mut c_void)
     }
 
-    pub fn generate_name_lib_selector(name: &str) -> impl FnMut(&&Entry) -> bool + '_{
+    pub fn generate_name_lib_selector(name: &str) -> impl FnMut(&&Entry) -> bool + '_ {
         move |entry| {
-            entry.path.contains(name) && entry.privilege.contains("r") && entry.privilege.contains("xp")
+            entry.path.contains(name)
+                && entry.privilege.contains("r")
+                && entry.privilege.contains("xp")
         }
     }
 
@@ -67,7 +67,6 @@ impl Program {
         let dlopen_address = self.get_func_in_lib("__libc_dlopen_mode", libc_entry)?;
         let guard = self.protect()?;
 
-        let ip = guard.ip();
         let mut regs = guard.regs();
         regs.rax = dlopen_address as u64; // dlopen
         regs.rdi = path as u64; // filename
@@ -79,7 +78,7 @@ impl Program {
 
     fn get_lib_buffer(&self, lib_entry: &Entry) -> Result<Vec<u8>> {
         if lib_entry.path.contains("/") {
-            let mut lib_file  = std::fs::File::open(lib_entry.path.clone())?;
+            let mut lib_file = std::fs::File::open(lib_entry.path.clone())?;
             let mut lib_buffer = Vec::new();
             lib_file.read_to_end(&mut lib_buffer).unwrap();
 
@@ -89,7 +88,10 @@ impl Program {
 
             let mut lib_buffer: Vec<u8> = Vec::with_capacity(size);
             lib_buffer.resize(size, 0);
-            self.read_slice(lib_buffer.as_mut_slice(), lib_entry.start_addr as *mut c_void)?;
+            self.read_slice(
+                lib_buffer.as_mut_slice(),
+                lib_entry.start_addr as *mut c_void,
+            )?;
 
             Ok(lib_buffer)
         }
@@ -101,7 +103,10 @@ impl Program {
         Ok(())
     }
 
-    pub fn select_lib<F>(&self, filter: F) -> Option<&Entry> where F: FnMut(&&Entry)->bool {
+    pub fn select_lib<F>(&self, filter: F) -> Option<&Entry>
+    where
+        F: FnMut(&&Entry) -> bool,
+    {
         self.maps.iter().filter(filter).nth(0)
     }
 
@@ -117,11 +122,10 @@ impl Program {
                             if name == func_name {
                                 let offset = dynsym.st_value as usize;
 
-                                let func_address = unsafe {
-                                    lib_entry.start_addr + (offset as u64) - lib_entry.padding_size
-                                };
+                                let func_address =
+                                    lib_entry.start_addr + (offset as u64) - lib_entry.padding_size;
 
-                                return Ok(func_address as *mut c_void)
+                                return Ok(func_address as *mut c_void);
                             }
                         }
                         _ => {}
@@ -129,10 +133,8 @@ impl Program {
                 }
 
                 Err(Error::from("cannot find library or function"))
-            },
-            _ => {
-                Err(Error::from("lib is not an ELF file"))
             }
+            _ => Err(Error::from("lib is not an ELF file")),
         }
     }
 
@@ -140,7 +142,7 @@ impl Program {
         let mut buf = s.to_owned().into_bytes();
         buf.resize(s.len() + 1, 0);
 
-        Ok(self.alloc_slice( &buf)?)
+        Ok(self.alloc_slice(&buf)?)
     }
 
     pub fn alloc_slice(&self, slice: &[u8]) -> Result<*mut c_void> {
@@ -161,7 +163,8 @@ impl Program {
             process_vm_writev(self.pid, &[local_iov], &[remote_iov])?;
         } else {
             for (index, byte) in slice.iter().enumerate() {
-                ptrace::write(self.pid, unsafe {target.add(index)}, *byte as *mut c_void).unwrap();
+                ptrace::write(self.pid, unsafe { target.add(index) }, *byte as *mut c_void)
+                    .unwrap();
             }
         }
 
@@ -171,7 +174,7 @@ impl Program {
     fn read_slice(&self, slice: &mut [u8], start_addr: *mut c_void) -> Result<()> {
         let len = slice.len();
 
-        let mut local_iov = IoVec::from_mut_slice(slice);
+        let local_iov = IoVec::from_mut_slice(slice);
         let remote_iov = RemoteIoVec {
             base: start_addr as usize,
             len,
@@ -184,7 +187,6 @@ impl Program {
     pub fn open<P: AsRef<Path>>(&self, path: P) -> Result<u64> {
         let guard = self.protect()?;
 
-        let ip = guard.ip();
         let mut regs = guard.regs();
         regs.rax = 2; // open
         regs.rdi = self.alloc_str(path.as_ref().to_str()?)? as u64; // filename
@@ -195,10 +197,9 @@ impl Program {
         Ok(guard.syscall()? as u64)
     }
 
-    pub fn mmap(&self, length: usize, fd: u64) -> Result<*mut c_void > {
+    pub fn mmap(&self, length: usize, fd: u64) -> Result<*mut c_void> {
         let guard = self.protect()?;
 
-        let ip = guard.ip();
         let mut regs = guard.regs();
         regs.rax = 9; // mmap
         regs.rdi = 0; // addr
@@ -222,7 +223,7 @@ impl Program {
 
                 self.read_slice(buffer.as_mut(), entry.start_addr as *mut c_void)?;
 
-                return Ok(buffer)
+                return Ok(buffer);
             }
         }
 
@@ -230,7 +231,7 @@ impl Program {
     }
 
     pub fn hard_replace_fun(&self, orig_fun: *mut c_void, new_fun: *mut c_void) -> Result<()> {
-        let mut instructions: Vec<u8> = vec![0;16];
+        let mut instructions: Vec<u8> = vec![0; 16];
         instructions[0] = 0x48;
         instructions[1] = 0xb8;
         unsafe {
@@ -239,14 +240,14 @@ impl Program {
         instructions[10] = 0xff;
         instructions[11] = 0xe0;
 
-        let first_part = unsafe {
-            *(&instructions[0] as *const u8 as *const u64)
-        };
-        let second_part = unsafe {
-            *(&instructions[8] as *const u8 as *const u64)
-        };
+        let first_part = unsafe { *(&instructions[0] as *const u8 as *const u64) };
+        let second_part = unsafe { *(&instructions[8] as *const u8 as *const u64) };
         ptrace::write(self.pid, orig_fun, first_part as *mut c_void)?;
-        ptrace::write(self.pid, unsafe {orig_fun.add(8)}, second_part as *mut c_void)?;
+        ptrace::write(
+            self.pid,
+            unsafe { orig_fun.add(8) },
+            second_part as *mut c_void,
+        )?;
 
         Ok(())
     }
