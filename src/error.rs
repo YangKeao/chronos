@@ -17,7 +17,7 @@ quick_error! {
         }
         Other(err: &'static str, backtrace: Backtrace) {
             from(err: &'static str) -> (err, Backtrace::new())
-            from(err: std::option::NoneError) -> ("None Error", Backtrace::new())
+            from(_err: std::option::NoneError) -> ("None Error", Backtrace::new())
         }
     }
 }

@@ -1,7 +1,7 @@
 use nix::unistd::Pid;
 use quick_error::quick_error;
 use std::fs::File;
-use std::io::{BufRead, BufReader, Read};
+use std::io::{BufRead, BufReader};
 
 use itertools::Itertools;
 
@@ -39,10 +39,13 @@ impl Iterator for MapReader {
     type Item = Entry;
 
     fn next(&mut self) -> Option<Self::Item> {
-        // TODO: handle error here
-
         let mut line = String::new();
-        self.file.read_line(&mut line);
+        match self.file.read_line(&mut line) {
+            Ok(_) => {}
+            Err(_) => {
+                return None;
+            }
+        };
 
         let mut section = line.split(" ");
         let addresses: &str = section.next()?;

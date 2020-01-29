@@ -97,12 +97,6 @@ impl Program {
         }
     }
 
-    pub fn refresh_map(&mut self) -> Result<()> {
-        self.maps = MapReader::from_pid(self.pid)?.collect();
-
-        Ok(())
-    }
-
     pub fn select_lib<F>(&self, filter: F) -> Option<&Entry>
     where
         F: FnMut(&&Entry) -> bool,
@@ -184,19 +178,6 @@ impl Program {
         Ok(())
     }
 
-    pub fn open<P: AsRef<Path>>(&self, path: P) -> Result<u64> {
-        let guard = self.protect()?;
-
-        let mut regs = guard.regs();
-        regs.rax = 2; // open
-        regs.rdi = self.alloc_str(path.as_ref().to_str()?)? as u64; // filename
-        regs.rsi = 0; // flags
-        regs.rdx = 0; // mode
-
-        guard.set_regs(regs)?;
-        Ok(guard.syscall()? as u64)
-    }
-
     pub fn mmap(&self, length: usize, fd: u64) -> Result<*mut c_void> {
         let guard = self.protect()?;
 
@@ -211,23 +192,6 @@ impl Program {
 
         guard.set_regs(regs)?;
         Ok(guard.syscall()?)
-    }
-
-    pub fn dump_vdso(&self) -> Result<Vec<u8>> {
-        for entry in self.maps.iter() {
-            if entry.path.contains("vdso") {
-                let length = (entry.end_addr - entry.start_addr) as usize;
-
-                let mut buffer = Vec::new();
-                buffer.resize(length, 0);
-
-                self.read_slice(buffer.as_mut(), entry.start_addr as *mut c_void)?;
-
-                return Ok(buffer);
-            }
-        }
-
-        Err(Error::from("cannot find vdso location"))
     }
 
     pub fn hard_replace_fun(&self, orig_fun: *mut c_void, new_fun: *mut c_void) -> Result<()> {
