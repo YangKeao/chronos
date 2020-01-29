@@ -25,6 +25,24 @@ impl Program {
         Ok(Program { pid, maps })
     }
 
+    pub fn trace_syscall(
+        &self,
+        start_hook: &dyn Fn(user_regs_struct),
+        end_hook: &dyn Fn(user_regs_struct),
+    ) -> Result<()> {
+        ptrace::syscall(self.pid, None)?;
+        waitpid(self.pid, None)?;
+        let regs = ptrace::getregs(self.pid)?;
+        start_hook(regs);
+
+        ptrace::syscall(self.pid, None)?;
+        waitpid(self.pid, None)?;
+        let regs = ptrace::getregs(self.pid)?;
+        end_hook(regs);
+
+        Ok(())
+    }
+
     pub fn cont(&mut self) -> Result<()> {
         ptrace::cont(self.pid, None)?;
 
@@ -147,28 +165,51 @@ impl Program {
         Ok(addr)
     }
 
-    pub fn write_slice(&self, slice: &[u8], target: *mut c_void) -> Result<()> {
-        if slice.len() > 512 {
-            let local_iov = IoVec::from_slice(slice);
-            let remote_iov = RemoteIoVec {
-                base: target as usize,
-                len: slice.len(),
-            };
-            process_vm_writev(self.pid, &[local_iov], &[remote_iov])?;
-        } else {
-            for (index, byte) in slice.iter().enumerate() {
-                ptrace::write(self.pid, unsafe { target.add(index) }, *byte as *mut c_void)
-                    .unwrap();
-            }
-        }
+    pub fn write<T: Sized>(&self, target: &T, addr: *mut c_void) -> Result<()> {
+        let len = std::mem::size_of::<T>();
+
+        let slice = unsafe { std::mem::transmute::<&T, &u8>(target) };
+        let slice = unsafe { std::slice::from_raw_parts(slice, len) };
+        let local_iov = IoVec::from_slice(slice);
+        let remote_iov = RemoteIoVec {
+            base: addr as usize,
+            len: len,
+        };
+        process_vm_writev(self.pid, &[local_iov], &[remote_iov])?;
 
         Ok(())
     }
 
-    fn read_slice(&self, slice: &mut [u8], start_addr: *mut c_void) -> Result<()> {
-        let len = slice.len();
+    pub fn write_slice(&self, target: &[u8], addr: *mut c_void) -> Result<()> {
+        let local_iov = IoVec::from_slice(target);
+        let remote_iov = RemoteIoVec {
+            base: addr as usize,
+            len: target.len(),
+        };
+        process_vm_writev(self.pid, &[local_iov], &[remote_iov])?;
 
+        Ok(())
+    }
+
+    pub fn read<T: Sized>(&self, target: &mut T, start_addr: *mut c_void) -> Result<()> {
+        let len = std::mem::size_of::<T>();
+
+        let slice = unsafe { std::mem::transmute::<&mut T, &mut u8>(target) };
+        let slice = unsafe { std::slice::from_raw_parts_mut(slice, len) };
         let local_iov = IoVec::from_mut_slice(slice);
+        let remote_iov = RemoteIoVec {
+            base: start_addr as usize,
+            len,
+        };
+
+        process_vm_readv(self.pid, &[local_iov], &[remote_iov])?;
+        Ok(())
+    }
+
+    fn read_slice(&self, target: &mut [u8], start_addr: *mut c_void) -> Result<()> {
+        let len = target.len();
+
+        let local_iov = IoVec::from_mut_slice(target);
         let remote_iov = RemoteIoVec {
             base: start_addr as usize,
             len,
@@ -240,7 +281,7 @@ impl ProgramContextGuard {
     }
 
     pub fn regs(&self) -> user_regs_struct {
-        self.backup_regs.clone()
+        self.backup_regs
     }
 
     pub fn set_regs(&self, regs: user_regs_struct) -> Result<()> {

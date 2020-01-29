@@ -95,6 +95,7 @@ dependencies = [
  "findshlibs",
  "goblin",
  "itertools",
+ "libc",
  "log",
  "memmap",
  "nix",

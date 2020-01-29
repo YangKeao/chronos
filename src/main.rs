@@ -1,6 +1,8 @@
 #![feature(try_trait)]
+#![feature(never_type)]
 
 use clap::{value_t, App, Arg};
+use libc::{c_void, timespec};
 use nix::unistd::Pid;
 
 use crate::error::Result;
@@ -13,10 +15,12 @@ mod error;
 mod maps;
 mod program;
 
-fn inject(pid: Pid, fake_image: String, tv_sec_delta: c_long, tv_nsec_delta: c_long) -> Result<()> {
-    info!("tracing program {}", pid);
-    let mut program = program::Program::ptrace(pid)?;
-
+fn inject(
+    program: &mut Program,
+    fake_image: String,
+    tv_sec_delta: c_long,
+    tv_nsec_delta: c_long,
+) -> Result<()> {
     info!("parsing vdso");
     let vdso_entry = program.select_lib(Program::generate_name_lib_selector("[vdso]"))?;
     let real_addr = program.get_func_in_lib("clock_gettime", vdso_entry)?;
@@ -42,10 +46,36 @@ fn inject(pid: Pid, fake_image: String, tv_sec_delta: c_long, tv_nsec_delta: c_l
     let tv_nsec_delta_ptr = program.dlsym(handle, "TV_NSEC_DELTA")?;
     program.write_slice(&tv_nsec_delta, tv_nsec_delta_ptr)?;
 
-    info!("continue");
-    program.cont()?;
-
     Ok(())
+}
+
+fn inject_syscall(program: &mut Program, tv_sec_delta: c_long, tv_nsec_delta: c_long) -> Result<!> {
+    loop {
+        // TODO: modify result of syscall in ebpf way
+        program.trace_syscall(&|_| {}, &|regs| {
+            if regs.orig_rax == 228 {
+                let addr = regs.rsi;
+                info!("get syscall target tp addr: {:x}", addr);
+
+                let mut timespec = timespec {
+                    tv_nsec: 0,
+                    tv_sec: 0,
+                };
+                if let Err(e) = program.read(&mut timespec, addr as *mut c_void) {
+                    error!("error while reading from {} {}", addr, e);
+                    return;
+                };
+
+                info!("modifying return value");
+                timespec.tv_nsec += tv_nsec_delta;
+                timespec.tv_sec += tv_sec_delta;
+                if let Err(e) = program.write(&mut timespec, addr as *mut c_void) {
+                    error!("error while writing result into {} {}", addr, e);
+                    return;
+                };
+            }
+        })?;
+    }
 }
 
 fn main() {
@@ -86,6 +116,11 @@ fn main() {
                 .help("delta of tv_nsec_delta field")
                 .required(true),
         )
+        .arg(
+            Arg::with_name("inject_syscall")
+                .short("e")
+                .long("inject_syscall"),
+        )
         .get_matches();
 
     let pid: i32 = match value_t!(matches, "pid", i32) {
@@ -121,7 +156,39 @@ fn main() {
         }
     };
 
-    if let Err(e) = inject(pid, fake_image, tv_sec_delta, tv_nsec_delta) {
+    info!("tracing program {}", pid);
+    let mut program = match Program::ptrace(pid) {
+        Ok(p) => p,
+        Err(e) => {
+            error!("fail to ptrace program {}", e);
+            return;
+        }
+    };
+
+    let inject_syscall_flag = matches.is_present("inject_syscall");
+    if let Err(e) = inject(
+        &mut program,
+        fake_image,
+        if inject_syscall_flag { 0 } else { tv_sec_delta },
+        if inject_syscall_flag {
+            tv_nsec_delta
+        } else {
+            0
+        },
+    ) {
         error!("inject error {}", e);
+    }
+
+    if matches.is_present("inject_syscall") {
+        info!("injecting syscall");
+
+        if let Err(e) = inject_syscall(&mut program, tv_sec_delta, tv_nsec_delta) {
+            error!("inject_syscall error {}", e);
+        }
+    } else {
+        info!("continue");
+        if let Err(e) = program.cont() {
+            error!("fail to continue program {}", e);
+        }
     }
 }
