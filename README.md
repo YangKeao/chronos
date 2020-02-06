@@ -8,7 +8,7 @@
 git clone https://github.com/YangKeao/chronos.git
 cd chronos
 cargo build --all
-cargo run -- --pid $pid --tv_nsec_delta 1000000000 --tv_sec_delta 1000000000 --fake ./target/debug/libfake_clock_gettime.so
+cargo run -- --pid $pid --tv_nsec_delta 1000000000 --tv_sec_delta 1000000000 --fake $(pwd)/target/debug/libfake_clock_gettime.so
 ```
 
 ## Requirement
@@ -44,4 +44,6 @@ If `-e` argument was passed to chronos, we will inject vdso to make sure all `cl
 1. PLT only mode. As most program linked with glibc will use glibc's binding `clock_gettime`, we can jmp to our fake function in PLT without destroy vdso's clock_gettime. And as every dynamic linked image has its own PLT, we can call `clock_gettime` directly in our fake function. It will be much simpler and faster than existing implementation.
 
 2. Use ebpf to modify syscall. Use ebpf (like ethercflow/time-chaos does) to modify syscall rather than use `ptrace`. As `ptrace` way will interrupt at every syscall, it will have a much heavy influence on performance.
+
+
 
